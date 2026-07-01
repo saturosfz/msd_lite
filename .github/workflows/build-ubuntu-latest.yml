@@ -60,3 +60,14 @@ jobs:
       # Execute tests defined by the CMake configuration.  
       # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
       run: ctest -C $BUILD_TYPE -j 16 --output-on-failure
+
+    - name: Upload Build Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        # 产物名称加入编译器后缀，如 build-artifacts-gcc / build-artifacts-clang
+        name: build-artifacts-${{ matrix.compiler }}
+        # 需要上传的路径。这里默认上传整个 build 目录
+        # 如果您只想上传特定的可执行文件，可以精确到路径，例如: ${{github.workspace}}/build/bin/
+        path: ${{github.workspace}}/build/
+        # 设置产物保留天数（可选）
+        retention-days: 7
