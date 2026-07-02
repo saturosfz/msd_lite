@@ -1,4 +1,4 @@
-name: build-ubuntu-latest
+name: build-ubuntu-musl
 
 on: [push, pull_request]
 
@@ -8,65 +8,70 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: alpine:latest
+
+    strategy:
+      matrix:
+        compiler: [musl]
 
     steps:
-    - name: Install Build Tools in Alpine
-      run: |
-        apk update
-        apk add --no-cache cmake make gcc g++ musl-dev git bash bsd-compat-headers
-
     - uses: actions/checkout@v4
       with:
-        submodules: 'recursive'
+        submodules: recursive
 
-    - name: Configure, Build and Package
+    - name: Install build dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          musl-tools \
+          musl-dev \
+          build-essential \
+          libbsd-dev \
+          linux-libc-dev \
+          libcunit1 libcunit1-dev
+
+    # ❌ 删除你原来的 queue.h 手动 patch（这是不稳定来源）
+    # Alpine header + Ubuntu musl 混用是典型“ABI污染”
+
+    - name: Verify musl toolchain
+      run: |
+        which musl-gcc
+        musl-gcc -v
+        echo "sysroot:"
+        musl-gcc --print-sysroot || true
+
+    - name: Create Build Directory
+      run: cmake -E make_directory ${{ github.workspace }}/build
+
+    - name: Configure CMake
+      working-directory: ${{ github.workspace }}/build
       shell: bash
       run: |
-        # 1. 修复 queue.h 缺失问题
-        mkdir -p /usr/include/sys
-        mkdir -p ${{github.workspace}}/src/sys
-        mkdir -p ${{github.workspace}}/src/liblcb/src/sys
-        
-        if [ -f /usr/include/bsd/sys/queue.h ]; then
-          cp /usr/include/bsd/sys/queue.h /usr/include/sys/queue.h
-          cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/sys/queue.h
-          cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/liblcb/src/sys/queue.h
-        fi
-
-        # 2. 创建并进入 build 目录进行 CMake 编译
-        mkdir -p ${{github.workspace}}/build
-        cd ${{github.workspace}}/build
-        
         cmake $GITHUB_WORKSPACE \
-          -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
-          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=${BUILD_TYPE} \
           -DENABLE_TESTS=OFF \
-          -DCMAKE_C_FLAGS="-I/usr/include -I${{github.workspace}}/src" \
-          -DCMAKE_EXE_LINKER_FLAGS="-static"
-          
-        cmake --build . --config $BUILD_TYPE -j 16
+          -DCMAKE_C_COMPILER=musl-gcc \
+          -DCMAKE_CXX_COMPILER=musl-g++ \
+          -DCMAKE_EXE_LINKER_FLAGS="-static" \
+          -DCMAKE_C_FLAGS="-I${GITHUB_WORKSPACE}/src"
 
-        # ================= 修改：将产物直接复制到宿容器共享的根目录 =================
-        echo "=== 开始搜寻编译产物 ==="
-        
-        # 自动寻找 build 目录下生成的可执行文件
-        # 并直接复制到 ${{github.workspace}} 根目录下，命名为确定的 msd_lite_static
-        find . -type f -executable \
-          ! -path "*/CMakeFiles/*" \
-          ! -path "*/tests/*" \
-          -exec cp {} ${{github.workspace}}/msd_lite_static \;
-          
-        echo "=== 根目录文件验证： ==="
-        ls -la ${{github.workspace}}/msd_lite_static
+    - name: Build
+      working-directory: ${{ github.workspace }}/build
+      run: cmake --build . --config ${BUILD_TYPE} -j $(nproc)
+
+    - name: Test
+      working-directory: ${{ github.workspace }}/build
+      run: ctest -C ${BUILD_TYPE} --output-on-failure
+
+    - name: Collect artifacts
+      run: |
+        echo "searching binaries..."
+        find ${{ github.workspace }}/build -type f -executable -maxdepth 3 -print
 
     - name: Upload Build Artifacts
-      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: build-artifacts-musl-static
-        # ================= 修改点：直接上传根目录下的单文件，绝无挂载盲区 =================
-        path: ${{github.workspace}}/msd_lite_static
-        if-no-files-found: error
+        name: build-artifacts-musl
+        path: ${{ github.workspace }}/build
         retention-days: 7
+        if-no-files-found: error
