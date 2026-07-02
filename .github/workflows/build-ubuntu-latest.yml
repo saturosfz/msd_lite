@@ -21,10 +21,10 @@ jobs:
       with:
         submodules: 'recursive'
 
-    - name: Configure and Build CMake Project
+    - name: Configure, Build and Package
       shell: bash
       run: |
-        # 创建全局和项目内的 sys 目录，防止 queue.h 找不到
+        # 1. 修复 queue.h 缺失问题
         mkdir -p /usr/include/sys
         mkdir -p ${{github.workspace}}/src/sys
         mkdir -p ${{github.workspace}}/src/liblcb/src/sys
@@ -35,11 +35,10 @@ jobs:
           cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/liblcb/src/sys/queue.h
         fi
 
-        # 创建并进入 build 目录
+        # 2. 创建并进入 build 目录进行 CMake 编译
         mkdir -p ${{github.workspace}}/build
         cd ${{github.workspace}}/build
         
-        # CMake 配置
         cmake $GITHUB_WORKSPACE \
           -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
           -DBUILD_TESTING=OFF \
@@ -47,16 +46,29 @@ jobs:
           -DCMAKE_C_FLAGS="-I/usr/include -I${{github.workspace}}/src" \
           -DCMAKE_EXE_LINKER_FLAGS="-static"
           
-        # 执行编译
         cmake --build . --config $BUILD_TYPE -j 16
+
+        # ================= 新增：工业级产物自动搜寻归档 =================
+        echo "=== 开始搜寻编译产物 ==="
+        # 创建一个绝对干净的交付目录
+        mkdir -p ${{github.workspace}}/dist
+        
+        # 使用 Linux 原生 find 命令，找出 build 目录下所有非 CMake 自带的可执行文件，并复制到 dist 目录中
+        # 这能确保不管最终产物叫 msd_lite 还是 msd，都能被成功抓取
+        find . -type f -executable \
+          ! -path "*/CMakeFiles/*" \
+          ! -path "*/tests/*" \
+          -exec cp {} ${{github.workspace}}/dist/ \;
+          
+        echo "=== 归档完成，当前 dist 目录下的产物有： ==="
+        ls -la ${{github.workspace}}/dist/
 
     - name: Upload Build Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-musl-static
-        # ================= 修改点：精准抓取编译出的可执行文件 =================
-        # 使用通配符在 build 目录下递归寻找名为 msd_lite 的文件
-        path: ${{github.workspace}}/build/**/msd_lite
+        # ================= 修改点：直接上传 100% 存在的 dist 目录 =================
+        path: ${{github.workspace}}/dist/
         if-no-files-found: error
         retention-days: 7
