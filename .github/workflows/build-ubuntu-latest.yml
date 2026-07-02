@@ -48,27 +48,25 @@ jobs:
           
         cmake --build . --config $BUILD_TYPE -j 16
 
-        # ================= 新增：工业级产物自动搜寻归档 =================
+        # ================= 修改：将产物直接复制到宿容器共享的根目录 =================
         echo "=== 开始搜寻编译产物 ==="
-        # 创建一个绝对干净的交付目录
-        mkdir -p ${{github.workspace}}/dist
         
-        # 使用 Linux 原生 find 命令，找出 build 目录下所有非 CMake 自带的可执行文件，并复制到 dist 目录中
-        # 这能确保不管最终产物叫 msd_lite 还是 msd，都能被成功抓取
+        # 自动寻找 build 目录下生成的可执行文件
+        # 并直接复制到 ${{github.workspace}} 根目录下，命名为确定的 msd_lite_static
         find . -type f -executable \
           ! -path "*/CMakeFiles/*" \
           ! -path "*/tests/*" \
-          -exec cp {} ${{github.workspace}}/dist/ \;
+          -exec cp {} ${{github.workspace}}/msd_lite_static \;
           
-        echo "=== 归档完成，当前 dist 目录下的产物有： ==="
-        ls -la ${{github.workspace}}/dist/
+        echo "=== 根目录文件验证： ==="
+        ls -la ${{github.workspace}}/msd_lite_static
 
     - name: Upload Build Artifacts
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-musl-static
-        # ================= 修改点：直接上传 100% 存在的 dist 目录 =================
-        path: ${{github.workspace}}/dist/
+        # ================= 修改点：直接上传根目录下的单文件，绝无挂载盲区 =================
+        path: ${{github.workspace}}/msd_lite_static
         if-no-files-found: error
         retention-days: 7
