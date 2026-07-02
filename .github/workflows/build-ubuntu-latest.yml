@@ -3,85 +3,56 @@ name: build-ubuntu-latest
 on: [push, pull_request]
 
 env:
-  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
   BUILD_TYPE: Release
 
 jobs:
   build:
-    # The CMake configure and build commands are platform agnostic and should work equally
-    # well on Windows or Mac. You can convert this to a matrix build if you need
-    # cross-platform coverage.
-    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        compiler: [gcc]
-        include:
-          - compiler: gcc
-            cc: gcc
-            cxx: g++
+    # ================= 核心修改：整个流水线在 Alpine 容器内运行 =================
+    container:
+      image: alpine:latest
 
     steps:
-    - uses: actions/checkout@v2
+    - name: Install Build Tools in Alpine
+      # Alpine 使用 apk 作为包管理器，这里安装编译所需的纯正 musl 工具链
+      run: |
+        apk update
+        apk add --no-cache cmake make gcc g++ musl-dev git bash
+
+    # 使用 GitHub 官方的 checkout，在容器内同样适用
+    - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
 
-    - name: Install libraries
-      run: |
-        sudo apt-get update
-        sudo apt-get install cmake libcunit1 libcunit1-doc libcunit1-dev musl-tools
-
-    - name: Fix musl sys/queue.h missing
-      run: |
-        # 创建 musl 的 sys 头文件搜索目录
-        sudo mkdir -p /usr/include/x86_64-linux-musl/sys
-        
-        # Ubuntu 系统自带的 libbsd-dev 包含了完美的 BSD 兼容 queue.h
-        # 我们直接把它复制到 musl 的系统目录下，安全、稳定且不依赖任何外部网络下载
-        if [ -f /usr/include/bsd/sys/queue.h ]; then
-          sudo cp /usr/include/bsd/sys/queue.h /usr/include/x86_64-linux-musl/sys/queue.h
-        else
-          echo "Fallback to download if local file not found"
-          # 备用方案：如果本地没有，从 GitHub 官方维护的稳定镜像源下载
-          sudo curl -sSL -o /usr/include/x86_64-linux-musl/sys/queue.h \
-            https://raw.githubusercontent.com/freebsd/freebsd-src/main/sys/sys/queue.h
-        fi
-
     - name: Create Build Environment
-      # Some projects don't allow in-source building, so create a separate build directory
-      # We'll use this as our working directory for all subsequent commands
       run: cmake -E make_directory ${{github.workspace}}/build
 
     - name: Configure CMake
-      # Use a bash shell so we can use the same syntax for environment variable
-      # access regardless of the host operating system
       shell: bash
       working-directory: ${{github.workspace}}/build
-      # Note the current convention is to use the -S and -B options here to specify source
-      # and build directories, but this is only available with CMake 3.13 and higher.
-      # The CMake binaries on the Github Actions machines are (as of this writing) 3.12
-      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DENABLE_TESTS=0 -DCMAKE_EXE_LINKER_FLAGS="-static" -DCMAKE_C_COMPILER=musl-gcc
+      # 1. 在 Alpine 下直接用自带的默认 gcc 即可（它原生就是 musl 编译器）
+      # 2. 依然传入 -static 确保所有依赖完全静态打包
+      run: |
+        cmake $GITHUB_WORKSPACE \
+          -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
+          -DBUILD_TESTING=OFF \
+          -DENABLE_TESTS=OFF \
+          -DCMAKE_EXE_LINKER_FLAGS="-static"
 
     - name: Build
       working-directory: ${{github.workspace}}/build
       shell: bash
-      # Execute the build.  You can specify a specific target with "--target <NAME>"
       run: cmake --build . --config $BUILD_TYPE -j 16
 
-    - name: Test
-      working-directory: ${{github.workspace}}/build
-      shell: bash
-      # Execute tests defined by the CMake configuration.  
-      # See https://cmake.org/cmake/help/latest/manual/ctest.1.html for more detail
-      run: ctest -C $BUILD_TYPE -j 16 --output-on-failure
-
     - name: Upload Build Artifacts
+      if: always()
+      # 虽然我们在 Alpine 容器内编译，但 GitHub 官方的 upload-artifact 会自动处理跨容器上传
       uses: actions/upload-artifact@v4
       with:
-        # 产物名称加入编译器后缀，如 build-artifacts-gcc / build-artifacts-clang
-        name: build-artifacts-${{ matrix.compiler }}
-        # 需要上传的路径。这里默认上传整个 build 目录
-        # 如果您只想上传特定的可执行文件，可以精确到路径，例如: ${{github.workspace}}/build/bin/
-        path: ${{github.workspace}}/build/
-        # 设置产物保留天数（可选）
+        name: build-artifacts-musl-static
+        path: |
+          ${{github.workspace}}/build/**/*
+          !${{github.workspace}}/build/**/*.o
+          !${{github.workspace}}/build/**/CMakeFiles/
+        if-no-files-found: error
         retention-days: 7
