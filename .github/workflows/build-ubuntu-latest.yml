@@ -15,7 +15,6 @@ jobs:
     - name: Install Build Tools in Alpine
       run: |
         apk update
-        # 显式安装 bsd-compat-headers，这个包装包里含有 Alpine 最正宗的 sys/queue.h
         apk add --no-cache cmake make gcc g++ musl-dev git bash bsd-compat-headers
 
     - uses: actions/checkout@v4
@@ -25,23 +24,22 @@ jobs:
     - name: Configure and Build CMake Project
       shell: bash
       run: |
-        # 1. 创建全局和项目内的 sys 目录，把 queue.h 拷贝到每一个它可能去偷看的地方
+        # 创建全局和项目内的 sys 目录，防止 queue.h 找不到
         mkdir -p /usr/include/sys
         mkdir -p ${{github.workspace}}/src/sys
         mkdir -p ${{github.workspace}}/src/liblcb/src/sys
         
-        # 从 Alpine 刚刚安装的兼容包里，把 queue.h 强行分发到这几个源码目录
         if [ -f /usr/include/bsd/sys/queue.h ]; then
           cp /usr/include/bsd/sys/queue.h /usr/include/sys/queue.h
           cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/sys/queue.h
           cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/liblcb/src/sys/queue.h
         fi
 
-        # 2. 创建并进入 build 目录
+        # 创建并进入 build 目录
         mkdir -p ${{github.workspace}}/build
         cd ${{github.workspace}}/build
         
-        # 3. 强行将当前目录(build)和系统目录都加入 CMake 的全局寻找路径中
+        # CMake 配置
         cmake $GITHUB_WORKSPACE \
           -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
           -DBUILD_TESTING=OFF \
@@ -49,7 +47,7 @@ jobs:
           -DCMAKE_C_FLAGS="-I/usr/include -I${{github.workspace}}/src" \
           -DCMAKE_EXE_LINKER_FLAGS="-static"
           
-        # 4. 执行编译
+        # 执行编译
         cmake --build . --config $BUILD_TYPE -j 16
 
     - name: Upload Build Artifacts
@@ -57,9 +55,8 @@ jobs:
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-musl-static
-        path: |
-          ${{github.workspace}}/build/**/*
-          !${{github.workspace}}/build/**/*.o
-          !${{github.workspace}}/build/**/CMakeFiles/
+        # ================= 修改点：精准抓取编译出的可执行文件 =================
+        # 使用通配符在 build 目录下递归寻找名为 msd_lite 的文件
+        path: ${{github.workspace}}/build/**/msd_lite
         if-no-files-found: error
         retention-days: 7
