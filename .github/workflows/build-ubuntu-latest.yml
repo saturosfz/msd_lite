@@ -53,7 +53,7 @@ jobs:
           -DCMAKE_C_COMPILER=musl-gcc \
           -DCMAKE_CXX_COMPILER=musl-g++ \
           -DCMAKE_EXE_LINKER_FLAGS="-static" \
-          -DCMAKE_C_FLAGS="-I${GITHUB_WORKSPACE}/src"
+          -DCMAKE_C_FLAGS="-I/usr/include/bsd -I${GITHUB_WORKSPACE}/src"
 
     - name: Build
       working-directory: ${{ github.workspace }}/build
