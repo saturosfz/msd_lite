@@ -32,7 +32,7 @@
 #define __CORE_STREAM_SYS_H__
 
 
-#include <bsd/sys/queue.h>
+#include <sys/queue.h>
 #include <time.h>
 
 #include "utils/macro.h"
