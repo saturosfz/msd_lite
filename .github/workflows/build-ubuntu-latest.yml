@@ -15,30 +15,41 @@ jobs:
     - name: Install Build Tools in Alpine
       run: |
         apk update
-        apk add --no-cache cmake make gcc g++ musl-dev git bash
+        # 显式安装 bsd-compat-headers，这个包装包里含有 Alpine 最正宗的 sys/queue.h
+        apk add --no-cache cmake make gcc g++ musl-dev git bash bsd-compat-headers
 
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
 
-    # ================= 修改点：合并创建、切换路径与配置步骤 =================
     - name: Configure and Build CMake Project
       shell: bash
       run: |
-        # 1. 在容器内部原生创建 build 目录
-        mkdir -p ${{github.workspace}}/build
+        # 1. 创建全局和项目内的 sys 目录，把 queue.h 拷贝到每一个它可能去偷看的地方
+        mkdir -p /usr/include/sys
+        mkdir -p ${{github.workspace}}/src/sys
+        mkdir -p ${{github.workspace}}/src/liblcb/src/sys
         
-        # 2. 原生 cd 进去
+        # 从 Alpine 刚刚安装的兼容包里，把 queue.h 强行分发到这几个源码目录
+        if [ -f /usr/include/bsd/sys/queue.h ]; then
+          cp /usr/include/bsd/sys/queue.h /usr/include/sys/queue.h
+          cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/sys/queue.h
+          cp /usr/include/bsd/sys/queue.h ${{github.workspace}}/src/liblcb/src/sys/queue.h
+        fi
+
+        # 2. 创建并进入 build 目录
+        mkdir -p ${{github.workspace}}/build
         cd ${{github.workspace}}/build
         
-        # 3. 直接在此处执行 CMake 配置
+        # 3. 强行将当前目录(build)和系统目录都加入 CMake 的全局寻找路径中
         cmake $GITHUB_WORKSPACE \
           -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
           -DBUILD_TESTING=OFF \
           -DENABLE_TESTS=OFF \
+          -DCMAKE_C_FLAGS="-I/usr/include -I${{github.workspace}}/src" \
           -DCMAKE_EXE_LINKER_FLAGS="-static"
           
-        # 4. 配置成功后，直接原位执行编译（省去多步骤切换路径的麻烦）
+        # 4. 执行编译
         cmake --build . --config $BUILD_TYPE -j 16
 
     - name: Upload Build Artifacts
