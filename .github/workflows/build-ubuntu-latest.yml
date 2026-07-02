@@ -8,45 +8,41 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-    # ================= 核心修改：整个流水线在 Alpine 容器内运行 =================
     container:
       image: alpine:latest
 
     steps:
     - name: Install Build Tools in Alpine
-      # Alpine 使用 apk 作为包管理器，这里安装编译所需的纯正 musl 工具链
       run: |
         apk update
         apk add --no-cache cmake make gcc g++ musl-dev git bash
 
-    # 使用 GitHub 官方的 checkout，在容器内同样适用
     - uses: actions/checkout@v4
       with:
         submodules: 'recursive'
 
-    - name: Create Build Environment
-      run: cmake -E make_directory ${{github.workspace}}/build
-
-    - name: Configure CMake
+    # ================= 修改点：合并创建、切换路径与配置步骤 =================
+    - name: Configure and Build CMake Project
       shell: bash
-      working-directory: ${{github.workspace}}/build
-      # 1. 在 Alpine 下直接用自带的默认 gcc 即可（它原生就是 musl 编译器）
-      # 2. 依然传入 -static 确保所有依赖完全静态打包
       run: |
+        # 1. 在容器内部原生创建 build 目录
+        mkdir -p ${{github.workspace}}/build
+        
+        # 2. 原生 cd 进去
+        cd ${{github.workspace}}/build
+        
+        # 3. 直接在此处执行 CMake 配置
         cmake $GITHUB_WORKSPACE \
           -DCMAKE_BUILD_TYPE=$BUILD_TYPE \
           -DBUILD_TESTING=OFF \
           -DENABLE_TESTS=OFF \
           -DCMAKE_EXE_LINKER_FLAGS="-static"
-
-    - name: Build
-      working-directory: ${{github.workspace}}/build
-      shell: bash
-      run: cmake --build . --config $BUILD_TYPE -j 16
+          
+        # 4. 配置成功后，直接原位执行编译（省去多步骤切换路径的麻烦）
+        cmake --build . --config $BUILD_TYPE -j 16
 
     - name: Upload Build Artifacts
       if: always()
-      # 虽然我们在 Alpine 容器内编译，但 GitHub 官方的 upload-artifact 会自动处理跨容器上传
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-musl-static
