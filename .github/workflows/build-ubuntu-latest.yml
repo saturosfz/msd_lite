@@ -49,8 +49,11 @@ jobs:
       run: ctest -C $BUILD_TYPE -j 16 --output-on-failure
 
     - name: Upload Build Artifacts
+      # 加上这一行：即使 Test 或 Build 失败，也必须执行上传，确保步骤一定出现在日志里
+      if: always() 
       uses: actions/upload-artifact@v4
       with:
         name: build-artifacts-musl-static
-        path: ${{github.workspace}}/build/
+        path: ${{github.workspace}}/build/**/*
+        if-no-files-found: error
         retention-days: 7
