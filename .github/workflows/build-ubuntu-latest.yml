@@ -15,6 +15,7 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
+        goos: [linux,windows]
         compiler: [gcc]
         include:
           - compiler: gcc
